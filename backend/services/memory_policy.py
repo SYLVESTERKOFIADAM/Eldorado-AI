@@ -20,11 +20,11 @@ class MemoryPolicy:
     Security policy for memory retention and activation.
 
     Memory is personalization data, not authority.
-    This policy must never grant permissions or tool capabilities.
+    This policy never grants permissions or tool capabilities.
     """
 
     def evaluate(self, memory: MemoryRecord) -> MemoryPolicyDecision:
-        # Security containment states take precedence over all other checks.
+        # Containment states always take precedence.
         if memory.status == MemoryStatus.QUARANTINED:
             return MemoryPolicyDecision(
                 allowed=False,
@@ -47,6 +47,15 @@ class MemoryPolicy:
                 reason="Memory has expired.",
             )
 
+        # Candidate memories may be stored for later review.
+        if memory.status == MemoryStatus.CANDIDATE:
+            return MemoryPolicyDecision(
+                allowed=True,
+                reason="Candidate memory may be retained pending review.",
+            )
+
+        # External/imported content may only be ACTIVE after
+        # explicit user approval.
         if memory.provenance in {
             MemoryProvenance.EXTERNAL_CONTENT,
             MemoryProvenance.IMPORTED_DATA,
