@@ -1,5 +1,5 @@
 from __future__ import annotations
-from backend.repositories.memory_repository import MemoryRepository
+
 from uuid import UUID
 
 from backend.models.memory import (
@@ -8,6 +8,8 @@ from backend.models.memory import (
     MemoryStatus,
     MemoryType,
 )
+from backend.repositories.memory_repository import MemoryRepository
+from backend.security.authenticated_user import AuthenticatedUser
 from backend.services.memory_policy import MemoryPolicy
 
 
@@ -16,12 +18,12 @@ class MemoryService:
     Application service for controlled memory operations.
 
     Security principles:
-    - Memory is scoped to a user.
+    - AuthenticatedUser establishes the application identity.
+    - Memory ownership is derived from authenticated identity.
     - Memory never grants authorization.
     - Lifecycle state is enforced before retrieval.
     - Policy decisions are centralized in MemoryPolicy.
-    - Repository access is abstracted so persistence can later move
-      to a database without changing the service contract.
+    - Repository access is abstracted from the service.
     """
 
     def __init__(self, repository: MemoryRepository):
@@ -31,13 +33,13 @@ class MemoryService:
     def create_memory(
         self,
         *,
-        user_id: UUID,
+        authenticated_user: AuthenticatedUser,
         memory_type: MemoryType,
         content: str,
         provenance: MemoryProvenance,
     ) -> MemoryRecord:
         memory = MemoryRecord(
-            user_id=user_id,
+            user_id=authenticated_user.user_id,
             memory_type=memory_type,
             content=content,
             provenance=provenance,
@@ -54,17 +56,17 @@ class MemoryService:
         self,
         *,
         memory_id: UUID,
-        user_id: UUID,
+        authenticated_user: AuthenticatedUser,
     ) -> MemoryRecord:
         memory = self._repository.get(memory_id)
 
         if memory is None:
             raise LookupError("Memory was not found.")
 
-        # Authorization boundary:
-        # the caller must own the memory being accessed.
-        if memory.user_id != user_id:
-            raise PermissionError("User is not authorized to access this memory.")
+        if memory.user_id != authenticated_user.user_id:
+            raise PermissionError(
+                "User is not authorized to access this memory."
+            )
 
         decision = self._policy.evaluate(memory)
 
@@ -77,15 +79,17 @@ class MemoryService:
         self,
         *,
         memory_id: UUID,
-        user_id: UUID,
+        authenticated_user: AuthenticatedUser,
     ) -> MemoryRecord:
         memory = self._repository.get(memory_id)
 
         if memory is None:
             raise LookupError("Memory was not found.")
 
-        if memory.user_id != user_id:
-            raise PermissionError("User is not authorized to modify this memory.")
+        if memory.user_id != authenticated_user.user_id:
+            raise PermissionError(
+                "User is not authorized to modify this memory."
+            )
 
         if memory.status == MemoryStatus.QUARANTINED:
             raise ValueError("Quarantined memory cannot be approved.")
@@ -110,15 +114,17 @@ class MemoryService:
         self,
         *,
         memory_id: UUID,
-        user_id: UUID,
+        authenticated_user: AuthenticatedUser,
     ) -> MemoryRecord:
         memory = self._repository.get(memory_id)
 
         if memory is None:
             raise LookupError("Memory was not found.")
 
-        if memory.user_id != user_id:
-            raise PermissionError("User is not authorized to modify this memory.")
+        if memory.user_id != authenticated_user.user_id:
+            raise PermissionError(
+                "User is not authorized to modify this memory."
+            )
 
         memory.delete()
 
@@ -128,15 +134,17 @@ class MemoryService:
         self,
         *,
         memory_id: UUID,
-        user_id: UUID,
+        authenticated_user: AuthenticatedUser,
     ) -> MemoryRecord:
         memory = self._repository.get(memory_id)
 
         if memory is None:
             raise LookupError("Memory was not found.")
 
-        if memory.user_id != user_id:
-            raise PermissionError("User is not authorized to modify this memory.")
+        if memory.user_id != authenticated_user.user_id:
+            raise PermissionError(
+                "User is not authorized to modify this memory."
+            )
 
         memory.quarantine()
 

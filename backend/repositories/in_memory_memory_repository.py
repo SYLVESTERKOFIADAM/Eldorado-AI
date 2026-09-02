@@ -10,8 +10,7 @@ class InMemoryMemoryRepository(MemoryRepository):
     """
     In-memory repository used for tests and local development.
 
-    This implementation is intentionally simple. Production persistence
-    will use PostgreSQL with database-level isolation.
+    Production persistence uses PostgreSQL with database-level isolation.
     """
 
     def __init__(self) -> None:
