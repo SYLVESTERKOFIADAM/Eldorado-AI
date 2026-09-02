@@ -6,6 +6,7 @@ import pytest
 from backend.models.memory import (
     MemoryProvenance,
     MemoryStatus,
+    MemorySensitivity,
     MemoryType,
 )
 from backend.repositories.in_memory_memory_repository import (
@@ -309,3 +310,65 @@ def test_memory_service_has_no_authorization_capabilities(service):
     assert not hasattr(service, "grant_permission")
     assert not hasattr(service, "grant_tool_access")
     assert not hasattr(service, "grant_capability")
+
+def test_active_memory_cannot_be_approved_again(service):
+    user = create_user()
+
+    memory = create_test_memory(
+        service,
+        user,
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+    )
+
+    approved = service.approve_memory(
+        memory_id=memory.id,
+        authenticated_user=user,
+    )
+
+    assert approved.status == MemoryStatus.ACTIVE
+
+    with pytest.raises(ValueError, match="already active"):
+        service.approve_memory(
+            memory_id=memory.id,
+            authenticated_user=user,
+        )
+
+
+
+
+
+def test_sensitive_inferred_memory_cannot_be_approved_directly(service):
+    user = create_user()
+
+    memory = service.create_memory(
+        authenticated_user=user,
+        memory_type=MemoryType.PREFERENCE,
+        content="Sensitive inferred preference.",
+        provenance=MemoryProvenance.CONVERSATION_INFERENCE,
+        confidence=0.99,
+        sensitivity=MemorySensitivity.SENSITIVE,
+    )
+
+    with pytest.raises(ValueError, match="Sensitive inferred"):
+        service.approve_memory(
+            memory_id=memory.id,
+            authenticated_user=user,
+        )
+
+def test_sensitive_inferred_memory_cannot_be_approved_directly(service):
+    user = create_user()
+
+    memory = service.create_memory(
+        authenticated_user=user,
+        memory_type=MemoryType.PREFERENCE,
+        content="Sensitive inferred preference.",
+        provenance=MemoryProvenance.CONVERSATION_INFERENCE,
+        confidence=0.99,
+        sensitivity=MemorySensitivity.SENSITIVE,
+    )
+
+    with pytest.raises(ValueError, match="Sensitive inferred"):
+        service.approve_memory(
+            memory_id=memory.id,
+            authenticated_user=user,
+        )

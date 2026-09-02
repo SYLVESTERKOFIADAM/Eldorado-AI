@@ -5,6 +5,7 @@ from uuid import UUID
 from backend.models.memory import (
     MemoryProvenance,
     MemoryRecord,
+    MemorySensitivity,
     MemoryStatus,
     MemoryType,
 )
@@ -37,12 +38,16 @@ class MemoryService:
         memory_type: MemoryType,
         content: str,
         provenance: MemoryProvenance,
+        confidence: float = 0.0,
+        sensitivity: MemorySensitivity = MemorySensitivity.INTERNAL,
     ) -> MemoryRecord:
         memory = MemoryRecord(
             user_id=authenticated_user.user_id,
             memory_type=memory_type,
             content=content,
             provenance=provenance,
+            confidence=confidence,
+            sensitivity=sensitivity,
         )
 
         decision = self._policy.evaluate(memory)
@@ -91,6 +96,9 @@ class MemoryService:
                 "User is not authorized to modify this memory."
             )
 
+        if memory.status == MemoryStatus.ACTIVE:
+            raise ValueError("Memory is already active.")
+
         if memory.status == MemoryStatus.QUARANTINED:
             raise ValueError("Quarantined memory cannot be approved.")
 
@@ -101,12 +109,27 @@ class MemoryService:
         }:
             raise ValueError("Inactive memory cannot be approved.")
 
-        memory.approve()
+        if memory.status != MemoryStatus.CANDIDATE:
+            raise ValueError("Only candidate memory can be approved.")
+
+        if (
+            memory.provenance == MemoryProvenance.CONVERSATION_INFERENCE
+            and memory.sensitivity
+            in {
+                MemorySensitivity.SENSITIVE,
+                MemorySensitivity.RESTRICTED,
+            }
+        ):
+            raise ValueError(
+                "Sensitive inferred memory cannot be approved directly."
+            )
 
         decision = self._policy.evaluate(memory)
 
         if not decision.allowed:
             raise ValueError(decision.reason)
+
+        memory.approve()
 
         return self._repository.save(memory)
 
