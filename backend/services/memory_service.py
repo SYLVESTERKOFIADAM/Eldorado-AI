@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from backend.repositories.memory_repository import MemoryRepository
 from uuid import UUID
 
 from backend.models.memory import (
@@ -24,7 +24,7 @@ class MemoryService:
       to a database without changing the service contract.
     """
 
-    def __init__(self, repository):
+    def __init__(self, repository: MemoryRepository):
         self._repository = repository
         self._policy = MemoryPolicy()
 

@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
@@ -7,33 +8,15 @@ from backend.models.memory import (
     MemoryStatus,
     MemoryType,
 )
+from backend.repositories.in_memory_memory_repository import (
+    InMemoryMemoryRepository,
+)
 from backend.services.memory_service import MemoryService
-
-
-class InMemoryRepository:
-    """Minimal repository used only for service tests."""
-
-    def __init__(self):
-        self.records = {}
-
-    def save(self, memory):
-        self.records[memory.id] = memory
-        return memory
-
-    def get(self, memory_id):
-        return self.records.get(memory_id)
-
-    def list_by_user(self, user_id):
-        return [
-            memory
-            for memory in self.records.values()
-            if memory.user_id == user_id
-        ]
 
 
 @pytest.fixture
 def repository():
-    return InMemoryRepository()
+    return InMemoryMemoryRepository()
 
 
 @pytest.fixture
@@ -41,26 +24,36 @@ def service(repository):
     return MemoryService(repository)
 
 
+def create_test_memory(
+    service,
+    *,
+    user_id=None,
+    provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+):
+    return service.create_memory(
+        user_id=user_id or uuid4(),
+        memory_type=MemoryType.PREFERENCE,
+        content="Test user preference.",
+        provenance=provenance,
+    )
+
+
 def test_service_can_store_user_memory(service, repository):
     user_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=user_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="Prefers detailed technical explanations.",
-        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
     )
 
     assert memory.user_id == user_id
     assert memory.status == MemoryStatus.CANDIDATE
-    assert memory.id in repository.records
+    assert repository.get(memory.id) == memory
 
 
 def test_external_memory_requires_approval(service):
-    memory = service.create_memory(
-        user_id=uuid4(),
-        memory_type=MemoryType.EPISODIC,
-        content="Information obtained from an external website.",
+    memory = create_test_memory(
+        service,
         provenance=MemoryProvenance.EXTERNAL_CONTENT,
     )
 
@@ -71,10 +64,9 @@ def test_external_memory_requires_approval(service):
 def test_user_can_approve_external_memory(service):
     user_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=user_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="Approved external information.",
         provenance=MemoryProvenance.EXTERNAL_CONTENT,
     )
 
@@ -87,15 +79,33 @@ def test_user_can_approve_external_memory(service):
     assert approved.user_approved is True
 
 
+def test_user_cannot_approve_another_users_memory(service):
+    owner_id = uuid4()
+    attacker_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=owner_id,
+        provenance=MemoryProvenance.EXTERNAL_CONTENT,
+    )
+
+    with pytest.raises(PermissionError):
+        service.approve_memory(
+            memory_id=memory.id,
+            user_id=attacker_id,
+        )
+
+    assert memory.status == MemoryStatus.CANDIDATE
+    assert memory.user_approved is False
+
+
 def test_user_cannot_retrieve_another_users_memory(service):
     owner_id = uuid4()
     attacker_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=owner_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="Private user preference.",
-        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
     )
 
     with pytest.raises(PermissionError):
@@ -108,11 +118,9 @@ def test_user_cannot_retrieve_another_users_memory(service):
 def test_user_can_retrieve_own_memory(service):
     user_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=user_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="User's own preference.",
-        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
     )
 
     retrieved = service.get_memory(
@@ -126,11 +134,9 @@ def test_user_can_retrieve_own_memory(service):
 def test_deleted_memory_cannot_be_retrieved(service):
     user_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=user_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="Memory that will be deleted.",
-        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
     )
 
     service.delete_memory(
@@ -145,14 +151,46 @@ def test_deleted_memory_cannot_be_retrieved(service):
         )
 
 
+def test_user_cannot_delete_another_users_memory(service):
+    owner_id = uuid4()
+    attacker_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=owner_id,
+    )
+
+    with pytest.raises(PermissionError):
+        service.delete_memory(
+            memory_id=memory.id,
+            user_id=attacker_id,
+        )
+
+    assert memory.status == MemoryStatus.CANDIDATE
+
+
+def test_user_can_delete_own_memory(service):
+    user_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=user_id,
+    )
+
+    deleted = service.delete_memory(
+        memory_id=memory.id,
+        user_id=user_id,
+    )
+
+    assert deleted.status == MemoryStatus.DELETED
+
+
 def test_quarantined_memory_cannot_be_retrieved(service):
     user_id = uuid4()
 
-    memory = service.create_memory(
+    memory = create_test_memory(
+        service,
         user_id=user_id,
-        memory_type=MemoryType.PREFERENCE,
-        content="Suspicious memory.",
-        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
     )
 
     service.quarantine_memory(
@@ -164,6 +202,108 @@ def test_quarantined_memory_cannot_be_retrieved(service):
         service.get_memory(
             memory_id=memory.id,
             user_id=user_id,
+        )
+
+
+def test_user_cannot_quarantine_another_users_memory(service):
+    owner_id = uuid4()
+    attacker_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=owner_id,
+    )
+
+    with pytest.raises(PermissionError):
+        service.quarantine_memory(
+            memory_id=memory.id,
+            user_id=attacker_id,
+        )
+
+    assert memory.status == MemoryStatus.CANDIDATE
+
+
+def test_user_can_quarantine_own_memory(service):
+    user_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=user_id,
+    )
+
+    quarantined = service.quarantine_memory(
+        memory_id=memory.id,
+        user_id=user_id,
+    )
+
+    assert quarantined.status == MemoryStatus.QUARANTINED
+
+
+def test_expired_memory_cannot_be_retrieved(service, repository):
+    user_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=user_id,
+    )
+
+    memory.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    repository.save(memory)
+
+    with pytest.raises(LookupError):
+        service.get_memory(
+            memory_id=memory.id,
+            user_id=user_id,
+        )
+
+
+def test_superseded_memory_cannot_be_retrieved(service, repository):
+    user_id = uuid4()
+
+    memory = create_test_memory(
+        service,
+        user_id=user_id,
+    )
+
+    memory.supersede()
+    repository.save(memory)
+
+    with pytest.raises(LookupError):
+        service.get_memory(
+            memory_id=memory.id,
+            user_id=user_id,
+        )
+
+
+def test_nonexistent_memory_raises_lookup_error(service):
+    with pytest.raises(LookupError):
+        service.get_memory(
+            memory_id=uuid4(),
+            user_id=uuid4(),
+        )
+
+
+def test_approve_nonexistent_memory_raises_lookup_error(service):
+    with pytest.raises(LookupError):
+        service.approve_memory(
+            memory_id=uuid4(),
+            user_id=uuid4(),
+        )
+
+
+def test_delete_nonexistent_memory_raises_lookup_error(service):
+    with pytest.raises(LookupError):
+        service.delete_memory(
+            memory_id=uuid4(),
+            user_id=uuid4(),
+        )
+
+
+def test_quarantine_nonexistent_memory_raises_lookup_error(service):
+    with pytest.raises(LookupError):
+        service.quarantine_memory(
+            memory_id=uuid4(),
+            user_id=uuid4(),
         )
 
 
