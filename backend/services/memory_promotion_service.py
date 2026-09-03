@@ -6,6 +6,7 @@ from uuid import UUID
 from backend.models.memory import MemoryRecord
 from backend.models.memory_candidate import MemoryCandidate
 from backend.security.authenticated_user import AuthenticatedUser
+from backend.services.memory_conflict_resolver import MemoryConflictResolver
 from backend.services.memory_learning_policy import (
     MemoryLearningDecision,
     MemoryLearningPolicy,
@@ -30,7 +31,8 @@ class MemoryPromotionService:
     Promotion requires:
     1. authenticated ownership validation;
     2. MemoryLearningPolicy approval;
-    3. explicit authenticated approval when required.
+    3. explicit authenticated approval when required;
+    4. deterministic conflict resolution before activation.
 
     Candidate data can never grant permissions, capabilities,
     authentication, or authorization.
@@ -40,9 +42,11 @@ class MemoryPromotionService:
         self,
         memory_service: MemoryService,
         policy: MemoryLearningPolicy,
+        conflict_resolver: MemoryConflictResolver,
     ) -> None:
         self._memory_service = memory_service
         self._policy = policy
+        self._conflict_resolver = conflict_resolver
 
     def promote(
         self,
@@ -53,8 +57,11 @@ class MemoryPromotionService:
         """
         Evaluate and, when policy allows, persist a candidate.
 
-        This method cannot approve a candidate on behalf of the user.
-        Candidates requiring approval remain pending.
+        Conflicts are resolved only against active memories belonging to
+        the authenticated user and matching the candidate memory type.
+
+        This method cannot approve a candidate on behalf of the user when
+        policy requires explicit approval.
         """
 
         self._verify_ownership(
@@ -89,8 +96,8 @@ class MemoryPromotionService:
                 reason=decision.reason,
             )
 
-        approved_memory = self._memory_service.approve_memory(
-            memory_id=memory.id,
+        approved_memory = self._activate_with_conflict_resolution(
+            memory=memory,
             authenticated_user=authenticated_user,
         )
 
@@ -114,16 +121,68 @@ class MemoryPromotionService:
         action, never from candidate content or an AI-controlled flag.
         """
 
-        memory = self._memory_service.approve_memory(
+        memory = self._memory_service.get_memory(
             memory_id=memory_id,
+            authenticated_user=authenticated_user,
+        )
+
+        if memory.status.value != "candidate":
+            raise ValueError("Only candidate memory can be approved.")
+
+        approved_memory = self._activate_with_conflict_resolution(
+            memory=memory,
             authenticated_user=authenticated_user,
         )
 
         return MemoryPromotionResult(
             promoted=True,
             requires_approval=False,
-            memory=memory,
+            memory=approved_memory,
             reason="Memory was explicitly approved by the authenticated user.",
+        )
+
+    def _activate_with_conflict_resolution(
+        self,
+        *,
+        memory: MemoryRecord,
+        authenticated_user: AuthenticatedUser,
+    ) -> MemoryRecord:
+        """
+        Resolve conflicts immediately before activating a memory.
+
+        Only active memories owned by the authenticated user and matching
+        the incoming memory type are considered.
+
+        If an existing memory wins, the incoming candidate is deleted
+        through MemoryService so the lifecycle change is persisted by
+        every repository implementation.
+        """
+
+        active_memories = self._memory_service.list_active_memories(
+            memory_type=memory.memory_type,
+            authenticated_user=authenticated_user,
+        )
+
+        for existing in active_memories:
+            conflict = self._conflict_resolver.resolve(
+                existing=existing,
+                incoming=memory,
+            )
+
+            if conflict.winner.id == existing.id:
+                return self._memory_service.delete_memory(
+                    memory_id=memory.id,
+                    authenticated_user=authenticated_user,
+                )
+
+            self._memory_service.supersede_memory(
+                memory_id=existing.id,
+                authenticated_user=authenticated_user,
+            )
+
+        return self._memory_service.approve_memory(
+            memory_id=memory.id,
+            authenticated_user=authenticated_user,
         )
 
     @staticmethod

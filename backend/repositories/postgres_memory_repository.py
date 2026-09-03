@@ -130,6 +130,67 @@ class PostgresMemoryRepository(MemoryRepository):
 
         return self._row_to_memory(row)
 
+    def update(self, memory: MemoryRecord) -> MemoryRecord:
+        with self._database.transaction(
+            self._authenticated_user_id
+        ) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    UPDATE memories
+                    SET
+                        user_id = %s,
+                        memory_type = %s,
+                        content = %s,
+                        provenance = %s,
+                        confidence = %s,
+                        sensitivity = %s,
+                        status = %s,
+                        user_approved = %s,
+                        created_at = %s,
+                        updated_at = %s,
+                        last_used_at = %s,
+                        expires_at = %s
+                    WHERE id = %s
+                    RETURNING
+                        id,
+                        user_id,
+                        memory_type,
+                        content,
+                        provenance,
+                        confidence,
+                        sensitivity,
+                        status,
+                        user_approved,
+                        created_at,
+                        updated_at,
+                        last_used_at,
+                        expires_at
+                    """,
+                    (
+                        memory.user_id,
+                        memory.memory_type.value,
+                        memory.content,
+                        memory.provenance.value,
+                        memory.confidence,
+                        memory.sensitivity.value,
+                        memory.status.value,
+                        memory.user_approved,
+                        memory.created_at,
+                        memory.updated_at,
+                        memory.last_used_at,
+                        memory.expires_at,
+                        memory.id,
+                    ),
+                )
+
+                row = cursor.fetchone()
+
+        if row is None:
+            raise LookupError("Memory was not found.")
+
+        return self._row_to_memory(row)
+
     def list_by_user(
         self,
         user_id: UUID,

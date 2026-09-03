@@ -354,21 +354,3 @@ def test_sensitive_inferred_memory_cannot_be_approved_directly(service):
             memory_id=memory.id,
             authenticated_user=user,
         )
-
-def test_sensitive_inferred_memory_cannot_be_approved_directly(service):
-    user = create_user()
-
-    memory = service.create_memory(
-        authenticated_user=user,
-        memory_type=MemoryType.PREFERENCE,
-        content="Sensitive inferred preference.",
-        provenance=MemoryProvenance.CONVERSATION_INFERENCE,
-        confidence=0.99,
-        sensitivity=MemorySensitivity.SENSITIVE,
-    )
-
-    with pytest.raises(ValueError, match="Sensitive inferred"):
-        service.approve_memory(
-            memory_id=memory.id,
-            authenticated_user=user,
-        )

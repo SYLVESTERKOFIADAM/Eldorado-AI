@@ -57,6 +57,30 @@ class MemoryService:
 
         return self._repository.save(memory)
 
+    def list_active_memories(
+        self,
+        *,
+        memory_type: MemoryType,
+        authenticated_user: AuthenticatedUser,
+    ) -> list[MemoryRecord]:
+        """
+        Return active memories of one type belonging to the authenticated user.
+
+        Memory retrieval remains ownership-bound and lifecycle-aware.
+        Memory contents never grant permissions or tool capabilities.
+        """
+        memories = self._repository.list_by_user(
+            authenticated_user.user_id
+        )
+
+        return [
+            memory
+            for memory in memories
+            if memory.memory_type == memory_type
+            and memory.status == MemoryStatus.ACTIVE
+            and not memory.is_expired
+        ]
+
     def get_memory(
         self,
         *,
@@ -131,7 +155,43 @@ class MemoryService:
 
         memory.approve()
 
-        return self._repository.save(memory)
+        return self._repository.update(memory)
+
+    def supersede_memory(
+        self,
+        *,
+        memory_id: UUID,
+        authenticated_user: AuthenticatedUser,
+    ) -> MemoryRecord:
+        """
+        Mark an owned memory as superseded.
+
+        Superseding changes lifecycle state only. It does not grant
+        permissions, authorize tools, authenticate users, or change
+        security policy.
+        """
+        memory = self._repository.get(memory_id)
+
+        if memory is None:
+            raise LookupError("Memory was not found.")
+
+        if memory.user_id != authenticated_user.user_id:
+            raise PermissionError(
+                "User is not authorized to modify this memory."
+            )
+
+        if memory.status == MemoryStatus.SUPERSEDED:
+            raise ValueError("Memory is already superseded.")
+
+        if memory.status in {
+            MemoryStatus.DELETED,
+            MemoryStatus.EXPIRED,
+        }:
+            raise ValueError("Inactive memory cannot be superseded.")
+
+        memory.supersede()
+
+        return self._repository.update(memory)
 
     def delete_memory(
         self,
@@ -151,7 +211,7 @@ class MemoryService:
 
         memory.delete()
 
-        return self._repository.save(memory)
+        return self._repository.update(memory)
 
     def quarantine_memory(
         self,
@@ -171,4 +231,4 @@ class MemoryService:
 
         memory.quarantine()
 
-        return self._repository.save(memory)
+        return self._repository.update(memory)

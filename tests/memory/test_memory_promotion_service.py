@@ -15,6 +15,7 @@ from backend.repositories.in_memory_memory_repository import (
     InMemoryMemoryRepository,
 )
 from backend.security.authenticated_user import AuthenticatedUser
+from backend.services.memory_conflict_resolver import MemoryConflictResolver
 from backend.services.memory_learning_policy import MemoryLearningPolicy
 from backend.services.memory_promotion_service import MemoryPromotionService
 from backend.services.memory_service import MemoryService
@@ -24,7 +25,12 @@ def build_service():
     repository = InMemoryMemoryRepository()
     memory_service = MemoryService(repository)
     policy = MemoryLearningPolicy()
-    promotion_service = MemoryPromotionService(memory_service, policy)
+    conflict_resolver = MemoryConflictResolver()
+    promotion_service = MemoryPromotionService(
+        memory_service,
+        policy,
+        conflict_resolver,
+    )
 
     return repository, promotion_service
 
@@ -365,3 +371,92 @@ def test_rejected_candidate_never_reaches_repository():
     assert result.memory is None
     assert repository.list_by_user(user.user_id) == []
 
+
+def test_incoming_stronger_memory_supersedes_existing_memory():
+    repository, service = build_service()
+
+    user = AuthenticatedUser(user_id=uuid4())
+
+    existing = MemoryCandidate(
+        authenticated_user_id=user.user_id,
+        memory_type=MemoryType.PREFERENCE,
+        content="User prefers detailed responses.",
+        provenance=MemoryProvenance.CONVERSATION_INFERENCE,
+        confidence=0.95,
+    )
+
+    existing_result = service.promote(
+        candidate=existing,
+        authenticated_user=user,
+    )
+
+    assert existing_result.memory is not None
+
+    approved_existing = service.approve(
+        memory_id=existing_result.memory.id,
+        authenticated_user=user,
+    )
+
+    assert approved_existing.memory is not None
+    assert approved_existing.memory.status == MemoryStatus.ACTIVE
+
+    incoming = MemoryCandidate(
+        authenticated_user_id=user.user_id,
+        memory_type=MemoryType.PREFERENCE,
+        content="User prefers concise responses.",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+        confidence=1.0,
+    )
+
+    incoming_result = service.promote(
+        candidate=incoming,
+        authenticated_user=user,
+    )
+
+    assert incoming_result.promoted is True
+    assert incoming_result.memory is not None
+    assert incoming_result.memory.status == MemoryStatus.ACTIVE
+
+    stored_existing = repository.get(existing_result.memory.id)
+
+    assert stored_existing is not None
+    assert stored_existing.status == MemoryStatus.SUPERSEDED
+
+
+def test_unrelated_memory_type_does_not_conflict():
+    repository, service = build_service()
+
+    user = AuthenticatedUser(user_id=uuid4())
+
+    preference = MemoryCandidate(
+        authenticated_user_id=user.user_id,
+        memory_type=MemoryType.PREFERENCE,
+        content="User prefers concise responses.",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+    )
+
+    project = MemoryCandidate(
+        authenticated_user_id=user.user_id,
+        memory_type=MemoryType.PROJECT,
+        content="User is working on Eldorado-AI.",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+    )
+
+    preference_result = service.promote(
+        candidate=preference,
+        authenticated_user=user,
+    )
+
+    project_result = service.promote(
+        candidate=project,
+        authenticated_user=user,
+    )
+
+    assert preference_result.memory is not None
+    assert project_result.memory is not None
+
+    assert preference_result.memory.status == MemoryStatus.ACTIVE
+    assert project_result.memory.status == MemoryStatus.ACTIVE
+
+    assert repository.get(preference_result.memory.id).status == MemoryStatus.ACTIVE
+    assert repository.get(project_result.memory.id).status == MemoryStatus.ACTIVE

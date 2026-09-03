@@ -29,6 +29,11 @@ class MemoryRepository(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def update(self, memory: MemoryRecord) -> MemoryRecord:
+        """Update an existing memory record and return the stored record."""
+        raise NotImplementedError
+
+    @abstractmethod
     def list_by_user(self, user_id: UUID) -> list[MemoryRecord]:
         """Return memory records belonging to the specified user."""
         raise NotImplementedError

@@ -240,3 +240,70 @@ def test_transaction_rollback_removes_unsaved_memory():
             raise RuntimeError("ROLLBACK_REPOSITORY_TEST")
 
     assert repository.get(memory_id) is None
+def test_update_own_memory():
+    repository = make_repository(USER_A)
+
+    memory_id = uuid4()
+
+    memory = MemoryRecord(
+        id=memory_id,
+        user_id=USER_A,
+        memory_type=MemoryType.PREFERENCE,
+        content="UPDATE REPOSITORY TEST",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+        status=MemoryStatus.CANDIDATE,
+    )
+
+    repository.save(memory)
+
+    try:
+        memory.status = MemoryStatus.SUPERSEDED
+        updated = repository.update(memory)
+
+        assert updated.id == memory_id
+        assert updated.user_id == USER_A
+        assert updated.status == MemoryStatus.SUPERSEDED
+
+        stored = repository.get(memory_id)
+        assert stored is not None
+        assert stored.status == MemoryStatus.SUPERSEDED
+    finally:
+        repository.delete(memory_id)
+
+
+def test_update_other_users_memory_cannot_bypass_rls():
+    repository = make_repository(USER_A)
+
+    memory = MemoryRecord(
+        id=MEMORY_B,
+        user_id=USER_A,
+        memory_type=MemoryType.PREFERENCE,
+        content="CROSS USER UPDATE TEST",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+        status=MemoryStatus.SUPERSEDED,
+    )
+
+    with pytest.raises(LookupError, match="Memory was not found"):
+        repository.update(memory)
+
+    verifier = make_repository(USER_B)
+    stored = verifier.get(MEMORY_B)
+
+    assert stored is not None
+    assert stored.user_id == USER_B
+    assert stored.content != "CROSS USER UPDATE TEST"
+
+
+def test_update_nonexistent_memory_raises_lookup_error():
+    repository = make_repository(USER_A)
+
+    memory = MemoryRecord(
+        id=uuid4(),
+        user_id=USER_A,
+        memory_type=MemoryType.PREFERENCE,
+        content="NONEXISTENT UPDATE TEST",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+    )
+
+    with pytest.raises(LookupError, match="Memory was not found"):
+        repository.update(memory)

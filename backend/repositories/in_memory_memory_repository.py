@@ -23,6 +23,13 @@ class InMemoryMemoryRepository(MemoryRepository):
     def get(self, memory_id: UUID) -> MemoryRecord | None:
         return self._memories.get(memory_id)
 
+    def update(self, memory: MemoryRecord) -> MemoryRecord:
+        if memory.id not in self._memories:
+            raise LookupError("Memory was not found.")
+
+        self._memories[memory.id] = memory
+        return memory
+
     def list_by_user(self, user_id: UUID) -> list[MemoryRecord]:
         return [
             memory
