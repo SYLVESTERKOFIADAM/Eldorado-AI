@@ -1,11 +1,5 @@
 -- Eldorado-AI
--- Migration 0003: Add structured memory conflict identity
---
--- Security principles:
---   1. Conflict identity is personalization metadata, not authorization.
---   2. Existing memories remain valid with a NULL conflict key.
---   3. Conflict matching remains scoped to authenticated ownership.
---   4. The conflict key cannot grant permissions or capabilities.
+-- Migration 0003: Add memory conflict keys
 
 BEGIN;
 
