@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import re
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -60,6 +61,10 @@ class MemoryRecord:
 
     user_approved: bool = False
 
+    # Structured personalization identity used only for conflict detection.
+    # This field has no authorization or capability semantics.
+    conflict_key: str | None = None
+
     id: UUID = field(default_factory=uuid4)
 
     created_at: datetime = field(
@@ -80,6 +85,23 @@ class MemoryRecord:
 
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("Memory confidence must be between 0.0 and 1.0.")
+
+        if self.conflict_key is not None:
+            if not self.conflict_key.strip():
+                raise ValueError("Memory conflict_key cannot be blank.")
+
+            if len(self.conflict_key) > 128:
+                raise ValueError(
+                    "Memory conflict_key cannot exceed 128 characters."
+                )
+
+            if not re.fullmatch(
+                r"[a-z0-9]+(?:_[a-z0-9]+)*",
+                self.conflict_key,
+            ):
+                raise ValueError(
+                    "Memory conflict_key must use lowercase snake_case."
+                )
 
         if self.created_at.tzinfo is None:
             raise ValueError("created_at must be timezone-aware.")

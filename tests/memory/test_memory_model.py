@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
+from uuid import UUID
 
 from backend.models.memory import (
     MemoryProvenance,
@@ -174,3 +175,64 @@ def test_non_expired_memory_is_detected():
     )
 
     assert record.is_expired is False
+
+def test_memory_record_accepts_no_conflict_key():
+    memory = MemoryRecord(
+        user_id=UUID("76bab0d0-94f5-4925-a729-62e31726456f"),
+        memory_type=MemoryType.PREFERENCE,
+        content="Prefers concise responses.",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+    )
+
+    assert memory.conflict_key is None
+
+
+def test_memory_record_accepts_valid_conflict_key():
+    memory = MemoryRecord(
+        user_id=UUID("76bab0d0-94f5-4925-a729-62e31726456f"),
+        memory_type=MemoryType.PREFERENCE,
+        content="Prefers concise responses.",
+        provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+        conflict_key="response_detail_level",
+    )
+
+    assert memory.conflict_key == "response_detail_level"
+
+
+def test_memory_record_rejects_blank_conflict_key():
+    with pytest.raises(ValueError, match="conflict_key cannot be blank"):
+        MemoryRecord(
+            user_id=UUID("76bab0d0-94f5-4925-a729-62e31726456f"),
+            memory_type=MemoryType.PREFERENCE,
+            content="Prefers concise responses.",
+            provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+            conflict_key="   ",
+        )
+
+
+def test_memory_record_rejects_invalid_conflict_key():
+    with pytest.raises(
+        ValueError,
+        match="conflict_key must use lowercase snake_case",
+    ):
+        MemoryRecord(
+            user_id=UUID("76bab0d0-94f5-4925-a729-62e31726456f"),
+            memory_type=MemoryType.PREFERENCE,
+            content="Prefers concise responses.",
+            provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+            conflict_key="ResponseDetailLevel",
+        )
+
+
+def test_memory_record_rejects_overlong_conflict_key():
+    with pytest.raises(
+        ValueError,
+        match="conflict_key cannot exceed 128 characters",
+    ):
+        MemoryRecord(
+            user_id=UUID("76bab0d0-94f5-4925-a729-62e31726456f"),
+            memory_type=MemoryType.PREFERENCE,
+            content="Prefers concise responses.",
+            provenance=MemoryProvenance.EXPLICIT_USER_STATEMENT,
+            conflict_key="a" * 129,
+        )
