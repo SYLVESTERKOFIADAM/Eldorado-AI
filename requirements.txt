@@ -1,1 +1,2 @@
 requests==2.34.2
+argon2-cffi==25.1.0PyJWT==2.13.0
