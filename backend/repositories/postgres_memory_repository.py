@@ -48,14 +48,15 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity,
                         status,
                         user_approved,
+                        conflict_key,
                         created_at,
                         updated_at,
                         last_used_at,
                         expires_at
                     )
                     VALUES (
-                        %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s, %s, %s
                     )
                     RETURNING
                         id,
@@ -67,6 +68,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity,
                         status,
                         user_approved,
+                        conflict_key,
                         created_at,
                         updated_at,
                         last_used_at,
@@ -82,6 +84,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         memory.sensitivity.value,
                         memory.status.value,
                         memory.user_approved,
+                        memory.conflict_key,
                         memory.created_at,
                         memory.updated_at,
                         memory.last_used_at,
@@ -113,6 +116,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity,
                         status,
                         user_approved,
+                        conflict_key,
                         created_at,
                         updated_at,
                         last_used_at,
@@ -147,6 +151,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity = %s,
                         status = %s,
                         user_approved = %s,
+                        conflict_key = %s,
                         created_at = %s,
                         updated_at = %s,
                         last_used_at = %s,
@@ -162,6 +167,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity,
                         status,
                         user_approved,
+                        conflict_key,
                         created_at,
                         updated_at,
                         last_used_at,
@@ -176,6 +182,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         memory.sensitivity.value,
                         memory.status.value,
                         memory.user_approved,
+                        memory.conflict_key,
                         memory.created_at,
                         memory.updated_at,
                         memory.last_used_at,
@@ -211,6 +218,7 @@ class PostgresMemoryRepository(MemoryRepository):
                         sensitivity,
                         status,
                         user_approved,
+                        conflict_key,
                         created_at,
                         updated_at,
                         last_used_at,
@@ -224,7 +232,10 @@ class PostgresMemoryRepository(MemoryRepository):
 
                 rows = cursor.fetchall()
 
-        return [self._row_to_memory(row) for row in rows]
+        return [
+            self._row_to_memory(row)
+            for row in rows
+        ]
 
     def delete(self, memory_id: UUID) -> None:
         with self._database.transaction(
@@ -251,8 +262,9 @@ class PostgresMemoryRepository(MemoryRepository):
             sensitivity=MemorySensitivity(row[6]),
             status=MemoryStatus(row[7]),
             user_approved=row[8],
-            created_at=row[9],
-            updated_at=row[10],
-            last_used_at=row[11],
-            expires_at=row[12],
+            conflict_key=row[9],
+            created_at=row[10],
+            updated_at=row[11],
+            last_used_at=row[12],
+            expires_at=row[13],
         )
