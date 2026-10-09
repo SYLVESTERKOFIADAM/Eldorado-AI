@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
+from psycopg import Connection
+
 from backend.database.connection import DatabaseConnection
 from backend.models.session import (
     RefreshTokenRecord,
@@ -191,6 +193,37 @@ class PostgresSessionRepository(SessionRepository):
 
         return self._row_to_session(row)
 
+    def revoke_token_family_in_transaction(
+        self,
+        connection: Connection,
+        token_family_id: UUID,
+        revoked_at: datetime,
+        reuse_detected_at: datetime,
+    ) -> int:
+        """Revoke a token family using an existing authenticated transaction.
+
+        The supplied connection must already be inside the refresh
+        authentication transaction established by DatabaseConnection.
+        This method must never open a second transaction.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET
+                    revoked_at = %s,
+                    reuse_detected_at = %s
+                WHERE token_family_id = %s
+                """,
+                (
+                    revoked_at,
+                    reuse_detected_at,
+                    token_family_id,
+                ),
+            )
+
+            return cursor.rowcount
+
     def revoke_token_family(
         self,
         token_family_id: UUID,
@@ -200,23 +233,12 @@ class PostgresSessionRepository(SessionRepository):
         with self._database.transaction(
             self._authenticated_user_id
         ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    UPDATE sessions
-                    SET
-                        revoked_at = %s,
-                        reuse_detected_at = %s
-                    WHERE token_family_id = %s
-                    """,
-                    (
-                        revoked_at,
-                        reuse_detected_at,
-                        token_family_id,
-                    ),
-                )
-
-                return cursor.rowcount
+            return self.revoke_token_family_in_transaction(
+                connection,
+                token_family_id,
+                revoked_at,
+                reuse_detected_at,
+            )
 
     def create_refresh_token(
         self,
@@ -300,6 +322,142 @@ class PostgresSessionRepository(SessionRepository):
 
         return self._row_to_refresh_token(row)
 
+    def rotate_refresh_token_in_transaction(
+        self,
+        connection: Connection,
+        current_token_id: UUID,
+        replacement: RefreshTokenRecord,
+        consumed_at: datetime,
+    ) -> RefreshTokenRecord:
+        """Rotate a refresh token using an existing authenticated transaction.
+
+        The supplied connection must already be inside the refresh
+        authentication transaction. No second transaction is opened.
+        """
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    rt.id,
+                    rt.session_id,
+                    rt.token_hash,
+                    rt.issued_at,
+                    rt.expires_at,
+                    rt.consumed_at,
+                    rt.replaced_by_id
+                FROM refresh_tokens AS rt
+                INNER JOIN sessions AS s
+                    ON s.id = rt.session_id
+                WHERE rt.id = %s
+                FOR UPDATE OF rt, s
+                """,
+                (current_token_id,),
+            )
+
+            current_row = cursor.fetchone()
+
+            if current_row is None:
+                raise LookupError(
+                    "Refresh token was not found."
+                )
+
+            current_token = self._row_to_refresh_token(
+                current_row
+            )
+
+            if current_token.consumed_at is not None:
+                raise ValueError(
+                    "Refresh token has already been consumed."
+                )
+
+            if current_token.session_id != replacement.session_id:
+                raise ValueError(
+                    "Replacement token must belong to the "
+                    "same session."
+                )
+
+            cursor.execute(
+                """
+                INSERT INTO refresh_tokens (
+                    id,
+                    session_id,
+                    token_hash,
+                    issued_at,
+                    expires_at,
+                    consumed_at,
+                    replaced_by_id
+                )
+                VALUES (
+                    %s, %s, %s, %s, %s, %s, %s
+                )
+                RETURNING
+                    id,
+                    session_id,
+                    token_hash,
+                    issued_at,
+                    expires_at,
+                    consumed_at,
+                    replaced_by_id
+                """,
+                (
+                    replacement.id,
+                    replacement.session_id,
+                    replacement.token_hash,
+                    replacement.issued_at,
+                    replacement.expires_at,
+                    replacement.consumed_at,
+                    None,
+                ),
+            )
+
+            replacement_row = cursor.fetchone()
+
+            if replacement_row is None:
+                raise RuntimeError(
+                    "Replacement refresh-token INSERT "
+                    "returned no row."
+                )
+
+            cursor.execute(
+                """
+                UPDATE refresh_tokens
+                SET
+                    consumed_at = %s,
+                    replaced_by_id = %s
+                WHERE id = %s
+                  AND consumed_at IS NULL
+                RETURNING id
+                """,
+                (
+                    consumed_at,
+                    replacement.id,
+                    current_token.id,
+                ),
+            )
+
+            consumed_row = cursor.fetchone()
+
+            if consumed_row is None:
+                raise RuntimeError(
+                    "Refresh-token consumption failed."
+                )
+
+            cursor.execute(
+                """
+                UPDATE sessions
+                SET last_used_at = %s
+                WHERE id = %s
+                """,
+                (
+                    consumed_at,
+                    current_token.session_id,
+                ),
+            )
+
+        return self._row_to_refresh_token(
+            replacement_row
+        )
+
     def rotate_refresh_token(
         self,
         current_token_id: UUID,
@@ -309,129 +467,12 @@ class PostgresSessionRepository(SessionRepository):
         with self._database.transaction(
             self._authenticated_user_id
         ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(
-                    """
-                    SELECT
-                        rt.id,
-                        rt.session_id,
-                        rt.token_hash,
-                        rt.issued_at,
-                        rt.expires_at,
-                        rt.consumed_at,
-                        rt.replaced_by_id
-                    FROM refresh_tokens AS rt
-                    INNER JOIN sessions AS s
-                        ON s.id = rt.session_id
-                    WHERE rt.id = %s
-                    FOR UPDATE OF rt, s
-                    """,
-                    (current_token_id,),
-                )
-
-                current_row = cursor.fetchone()
-
-                if current_row is None:
-                    raise LookupError(
-                        "Refresh token was not found."
-                    )
-
-                current_token = self._row_to_refresh_token(
-                    current_row
-                )
-
-                if current_token.consumed_at is not None:
-                    raise ValueError(
-                        "Refresh token has already been consumed."
-                    )
-
-                if current_token.session_id != replacement.session_id:
-                    raise ValueError(
-                        "Replacement token must belong to the "
-                        "same session."
-                    )
-
-                cursor.execute(
-                    """
-                    INSERT INTO refresh_tokens (
-                        id,
-                        session_id,
-                        token_hash,
-                        issued_at,
-                        expires_at,
-                        consumed_at,
-                        replaced_by_id
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s, %s
-                    )
-                    RETURNING
-                        id,
-                        session_id,
-                        token_hash,
-                        issued_at,
-                        expires_at,
-                        consumed_at,
-                        replaced_by_id
-                    """,
-                    (
-                        replacement.id,
-                        replacement.session_id,
-                        replacement.token_hash,
-                        replacement.issued_at,
-                        replacement.expires_at,
-                        replacement.consumed_at,
-                        None,
-                    ),
-                )
-
-                replacement_row = cursor.fetchone()
-
-                if replacement_row is None:
-                    raise RuntimeError(
-                        "Replacement refresh-token INSERT "
-                        "returned no row."
-                    )
-
-                cursor.execute(
-                    """
-                    UPDATE refresh_tokens
-                    SET
-                        consumed_at = %s,
-                        replaced_by_id = %s
-                    WHERE id = %s
-                      AND consumed_at IS NULL
-                    RETURNING id
-                    """,
-                    (
-                        consumed_at,
-                        replacement.id,
-                        current_token.id,
-                    ),
-                )
-
-                consumed_row = cursor.fetchone()
-
-                if consumed_row is None:
-                    raise RuntimeError(
-                        "Refresh-token consumption failed."
-                    )
-
-                cursor.execute(
-                    """
-                    UPDATE sessions
-                    SET last_used_at = %s
-                    WHERE id = %s
-                    """,
-                    (
-                        consumed_at,
-                        current_token.session_id,
-                    ),
-                )
-
-        return self._row_to_refresh_token(
-            replacement_row
-        )
+            return self.rotate_refresh_token_in_transaction(
+                connection,
+                current_token_id,
+                replacement,
+                consumed_at,
+            )
 
     @staticmethod
     def _row_to_session(
