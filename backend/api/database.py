@@ -61,3 +61,13 @@ def get_authenticated_transaction(
     """
     with authenticated_transaction(user, database) as connection:
         yield connection
+
+
+def get_database_dsn() -> str:
+    """
+    Return the configured application database DSN.
+
+    Public accessor for controlled application configuration. The DSN is
+    never derived from request data.
+    """
+    return _get_database_dsn()
