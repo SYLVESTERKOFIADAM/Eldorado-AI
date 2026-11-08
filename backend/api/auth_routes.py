@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from fastapi import (
     APIRouter,
@@ -15,6 +16,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.api.database import get_database_dsn
 from backend.database.account_store import PostgresAccountStore
 from backend.database.rate_limit_store import PostgresRateLimitStore
+from backend.security.client_ip import (
+    resolve_client_ip,
+    trusted_proxies_from_env,
+)
 from backend.security.rate_limit import (
     REGISTER_PER_EMAIL,
     REGISTER_PER_IP,
@@ -70,17 +75,38 @@ def get_rate_limit_store() -> RateLimitStore:
 
 
 def get_email_sender() -> VerificationEmailSender:
+    environment = os.environ.get("ELDORADO_ENV", "").strip().lower()
+    console_enabled = (
+        os.environ.get("ELDORADO_ENABLE_CONSOLE_VERIFICATION_EMAIL", "")
+        .strip()
+        .lower()
+        == "true"
+    )
+
+    if environment != "development" or not console_enabled:
+        raise RuntimeError(
+            "Verification email delivery is not configured. "
+            "Console delivery requires explicit development-only opt-in."
+        )
+
     return ConsoleVerificationEmailSender()
 
 
 def get_client_ip(request: Request) -> str:
     """
-    Direct connection address. Does NOT trust X-Forwarded-For.
+    Client address used as the rate-limit identity.
 
-    Behind a reverse proxy this must be replaced with a trusted-proxy
-    aware implementation, or every client shares one limit bucket.
+    X-Forwarded-For is honoured only when the direct peer is a proxy
+    listed in ELDORADO_TRUSTED_PROXIES. With the variable unset, only
+    the direct connection address is used.
     """
-    return request.client.host if request.client else "unknown"
+    peer = request.client.host if request.client else None
+
+    return resolve_client_ip(
+        peer,
+        request.headers.get("x-forwarded-for"),
+        trusted_proxies_from_env(),
+    )
 
 
 def _enforce(
