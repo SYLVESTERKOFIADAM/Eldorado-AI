@@ -11,6 +11,7 @@ from backend.api.login_routes import router as login_router
 from backend.api.refresh_routes import router as refresh_router
 from backend.api.logout_routes import router as logout_router
 from backend.api.resend_routes import router as resend_router
+from backend.api.password_routes import router as password_router
 
 
 def create_app() -> FastAPI:
@@ -46,5 +47,6 @@ def create_app() -> FastAPI:
     app.include_router(refresh_router)
     app.include_router(logout_router)
     app.include_router(resend_router)
+    app.include_router(password_router)
 
     return app
