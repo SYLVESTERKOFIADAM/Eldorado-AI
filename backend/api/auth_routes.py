@@ -35,6 +35,7 @@ from backend.security.registration import (
     register_account,
     verify_email,
 )
+from backend.services.smtp_email import SmtpEmailSender
 from backend.services.verification_email import (
     ConsoleVerificationEmailSender,
     VerificationEmailSender,
@@ -75,6 +76,8 @@ def get_rate_limit_store() -> RateLimitStore:
 
 
 def get_email_sender() -> VerificationEmailSender:
+    if os.environ.get("ELDORADO_EMAIL_BACKEND", "").strip().lower() == "smtp":
+        return SmtpEmailSender.from_environment()
     environment = os.environ.get("ELDORADO_ENV", "").strip().lower()
     console_enabled = (
         os.environ.get("ELDORADO_ENABLE_CONSOLE_VERIFICATION_EMAIL", "")

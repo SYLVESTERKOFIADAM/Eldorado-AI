@@ -44,6 +44,7 @@ from backend.services.password_reset_email import (
     ConsolePasswordResetEmailSender,
     PasswordResetEmailSender,
 )
+from backend.services.smtp_email import SmtpEmailSender
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,8 @@ def get_password_change_store() -> PasswordChangeStore:
 
 
 def get_password_reset_sender() -> PasswordResetEmailSender:
+    if os.environ.get("ELDORADO_EMAIL_BACKEND", "").strip().lower() == "smtp":
+        return SmtpEmailSender.from_environment()
     environment = os.environ.get("ELDORADO_ENV", "").strip().lower()
     console_enabled = (
         os.environ.get("ELDORADO_ENABLE_CONSOLE_RESET_EMAIL", "")
