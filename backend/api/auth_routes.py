@@ -112,6 +112,23 @@ def get_client_ip(request: Request) -> str:
     )
 
 
+def require_registration_enabled() -> None:
+    """
+    Public registration is closed unless explicitly enabled.
+
+    Eldorado is a private single-owner system. The owner account is
+    created through a controlled bootstrap, not through this endpoint.
+    While closed, the route answers 404 so it is indistinguishable from
+    an endpoint that does not exist.
+    """
+    enabled = os.environ.get("ELDORADO_ENABLE_REGISTRATION", "")
+
+    if enabled.strip().lower() != "true":
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not Found",
+        )
+
 def _enforce(
     store: RateLimitStore,
     policy: RateLimitPolicy,
@@ -147,7 +164,11 @@ def _deliver_verification(
         logger.error("verification email delivery failed")
 
 
-@router.post("/register", status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/register",
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_registration_enabled)],
+)
 def register(
     payload: RegisterRequest,
     background_tasks: BackgroundTasks,

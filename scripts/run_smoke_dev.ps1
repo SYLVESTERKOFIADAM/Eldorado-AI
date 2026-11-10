@@ -5,6 +5,7 @@ Set-Location (Split-Path $PSScriptRoot -Parent)
 $env:ELDORADO_ENV = 'development'
 $env:ELDORADO_ENABLE_CONSOLE_VERIFICATION_EMAIL = 'true'
 $env:ELDORADO_ENABLE_CONSOLE_RESET_EMAIL = 'true'
+$env:ELDORADO_ENABLE_REGISTRATION = 'true'
 
 $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
