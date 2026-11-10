@@ -5,7 +5,11 @@ import psycopg
 
 class PostgresAccountCounter:
     """
-    Counts accounts using a database-owner connection.
+    Counts login-capable accounts using a database-owner connection.
+
+    Only accounts with an email can authenticate, so credential-less rows
+    such as the RLS test fixtures do not count: they cannot log in and
+    cannot become a second owner.
 
     Row-level security would hide other accounts from the restricted
     application role and make an existing owner look like an empty
@@ -33,7 +37,7 @@ class PostgresAccountCounter:
                 )
 
             row = connection.execute(
-                "SELECT count(*) FROM public.users"
+                "SELECT count(*) FROM public.users WHERE email IS NOT NULL"
             ).fetchone()
 
         if row is None:

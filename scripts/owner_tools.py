@@ -39,10 +39,12 @@ def _dsn() -> str:
 
 def bootstrap() -> int:
     email = input("Owner email address: ").strip()
+    print(f"Using email: {email}")
     password = getpass.getpass(
         f"Owner password (hidden, at least {OWNER_MIN_PASSWORD_LENGTH} characters): "
     )
     repeated = getpass.getpass("Repeat owner password: ")
+    print(f"Received {len(password)} and {len(repeated)} characters.")
 
     if password != repeated:
         print("FAILED: passwords do not match.")
