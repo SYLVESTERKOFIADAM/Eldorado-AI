@@ -12,10 +12,13 @@ $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $env:ELDORADO_JWT_SECRET = [Convert]::ToBase64String($bytes)
 
-$appPassword = ConvertTo-Plain (Read-Host 'Password for role eldorado_app (hidden)' -AsSecureString)
-if (-not $appPassword) { throw 'Password must not be empty.' }
-$escaped = $appPassword.Replace('\', '\\').Replace("'", "\'")
-$env:ELDORADO_DATABASE_DSN = "host=localhost port=5432 dbname=postgres user=eldorado_app password='$escaped'"
+# The eldorado_app password comes from pgpass.conf (libpq), so it is never typed
+# and never placed in the connection string.
+$pgpass = Join-Path $env:APPDATA 'postgresql\pgpass.conf'
+if (-not (Test-Path $pgpass) -or -not (Select-String -Path $pgpass -Pattern '^localhost:5432:postgres:eldorado_app:' -Quiet)) {
+    throw "No eldorado_app entry for localhost:5432:postgres in $pgpass."
+}
+$env:ELDORADO_DATABASE_DSN = 'host=localhost port=5432 dbname=postgres user=eldorado_app'
 
 $log = Join-Path $env:TEMP 'eldorado-server.log'
 $server = $null
@@ -61,7 +64,6 @@ finally {
     Remove-Item Env:\ELDORADO_DATABASE_DSN -ErrorAction SilentlyContinue
     Remove-Item Env:\ELDORADO_JWT_SECRET -ErrorAction SilentlyContinue
     $ownerPassword = $null
-    $appPassword = $null
     if (Test-Path "$log.err") {
         Write-Host "`n=== server error log (tail, redacted) ===" -ForegroundColor Yellow
         Get-Content "$log.err" -Tail 8 |
