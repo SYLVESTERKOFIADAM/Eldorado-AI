@@ -18,6 +18,7 @@ import psycopg
 
 from backend.database.account_store import PostgresAccountStore
 from backend.database.owner_store import PostgresAccountCounter
+from backend.security.dev_safeguards import purge_refusal
 from backend.security.owner_bootstrap import (
     OWNER_MIN_PASSWORD_LENGTH,
     OwnerBootstrapError,
@@ -87,6 +88,22 @@ def purge(apply: bool) -> int:
                 print("Dry run. Nothing was deleted.")
                 return 0
 
+            database = connection.execute(
+                "SELECT current_database()"
+            ).fetchone()[0]
+            typed = input(
+                f"Connected to database '{database}'. "
+                "Type its name to confirm deletion: "
+            ).strip()
+            reason = purge_refusal(
+                os.environ.get("ELDORADO_ENV"),
+                database,
+                typed,
+            )
+
+            if reason is not None:
+                print(f"FAILED, nothing was deleted: {reason}")
+                return 1
             if not matching:
                 print("Nothing to delete.")
                 return 0
