@@ -62,10 +62,14 @@ try {
     $before = Get-DbStatus
     Write-Host "Migration files found : $($before.Files)"
     Write-Host "Applied before        : $($before.Applied)"
-    if ($before.Files -ne '13') { throw "Expected 13 migration files, found $($before.Files)." }
-    $allowed = @('1,2,3,4,5,6,7,8,9,10', '1,2,3,4,5,6,7,8,9,10,11', '1,2,3,4,5,6,7,8,9,10,11,12')
-    if ($allowed -notcontains $before.Applied) {
-        throw "Dev DB is not at 0010, 0011 or 0012 (applied: '$($before.Applied)'). Stopping."
+    $fileCount = [int]$before.Files
+    $appliedCount = @($before.Applied -split ',' | Where-Object { $_ }).Count
+    if ($before.Applied -ne ((1..$appliedCount) -join ',')) {
+        throw "Applied migrations are not a contiguous run from 0001 (applied: '$($before.Applied)'). Stopping."
+    }
+    if ($appliedCount -ge $fileCount) { throw 'Nothing to migrate: the database already has every migration.' }
+    if ($fileCount - $appliedCount -gt 3) {
+        throw "Dev DB is $($fileCount - $appliedCount) migrations behind (applied: '$($before.Applied)'). Review before migrating."
     }
     $nextLabel = '{0:D4}' -f (($before.Applied -split ',').Count + 1)
     Write-Host "Next migration to apply: $nextLabel"
@@ -87,8 +91,9 @@ try {
 
     $after = Get-DbStatus
     Write-Host "Applied after         : $($after.Applied)"
-    if ($after.Applied -ne '1,2,3,4,5,6,7,8,9,10,11,12,13') { throw 'DB is not at 0013 after migrating.' }
-    Write-Host "`nDev database is now at migration 0013." -ForegroundColor Green
+    $finalLabel = '{0:D4}' -f $fileCount
+    if ($after.Applied -ne ((1..$fileCount) -join ',')) { throw "DB is not at migration $finalLabel after migrating." }
+    Write-Host "`nDev database is now at migration $finalLabel." -ForegroundColor Green
 }
 finally {
     Remove-Item Env:\ELDORADO_MIGRATION_DSN -ErrorAction SilentlyContinue
