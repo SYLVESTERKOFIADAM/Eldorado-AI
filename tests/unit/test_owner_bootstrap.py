@@ -13,130 +13,91 @@ from backend.security.owner_bootstrap import (
 PASSWORD = "correct-horse-battery-staple"
 
 
-class FakeAccounts:
-    def __init__(self) -> None:
-        self.accounts: dict[str, dict] = {}
+class FakeOwnerStore:
+    def __init__(self, *, exists: bool = False) -> None:
+        self.exists = exists
+        self.created: list[tuple[str, str]] = []
 
-    def create_pending_account(
+    def create_owner_account(
         self,
         email: str,
         password_hash: str,
-        token_hash: str,
     ) -> UUID | None:
-        if email in self.accounts:
+        if self.exists:
             return None
 
-        self.accounts[email] = {
-            "password_hash": password_hash,
-            "token_hash": token_hash,
-            "verified": False,
-        }
+        self.created.append((email, password_hash))
         return uuid4()
 
-    def verify_email_token(self, token_hash: str) -> bool:
-        for account in self.accounts.values():
-            if account["token_hash"] == token_hash and not account["verified"]:
-                account["verified"] = True
-                return True
 
-        return False
+def test_creates_an_owner_with_an_argon2id_hash() -> None:
+    store = FakeOwnerStore()
 
-
-class NeverVerifies(FakeAccounts):
-    def verify_email_token(self, token_hash: str) -> bool:
-        return False
-
-
-class Counter:
-    def __init__(self, count: int) -> None:
-        self._count = count
-
-    def count_accounts(self) -> int:
-        return self._count
-
-
-def test_creates_a_verified_owner_when_no_account_exists() -> None:
-    accounts = FakeAccounts()
-
-    owner = bootstrap_owner(accounts, Counter(0), "owner@example.com", PASSWORD)
+    owner = bootstrap_owner(store, "owner@example.com", PASSWORD)
 
     assert owner == "owner@example.com"
-    stored = accounts.accounts["owner@example.com"]
-    assert stored["verified"] is True
-    assert stored["password_hash"].startswith("$argon2id$")
-    assert PASSWORD not in stored["password_hash"]
+    [(email, password_hash)] = store.created
+    assert email == "owner@example.com"
+    assert password_hash.startswith("$argon2id$")
+    assert PASSWORD not in password_hash
 
 
 def test_email_is_normalised() -> None:
-    accounts = FakeAccounts()
+    store = FakeOwnerStore()
 
-    owner = bootstrap_owner(
-        accounts,
-        Counter(0),
-        "  Owner@Example.COM ",
-        PASSWORD,
-    )
+    owner = bootstrap_owner(store, "  Owner@Example.COM ", PASSWORD)
 
     assert owner == "owner@example.com"
-    assert "owner@example.com" in accounts.accounts
+    assert store.created[0][0] == "owner@example.com"
 
 
-def test_refuses_when_any_account_already_exists() -> None:
-    accounts = FakeAccounts()
+def test_refuses_when_an_account_already_exists() -> None:
+    store = FakeOwnerStore(exists=True)
 
     with pytest.raises(OwnerBootstrapError, match="already exists"):
-        bootstrap_owner(accounts, Counter(1), "owner@example.com", PASSWORD)
+        bootstrap_owner(store, "owner@example.com", PASSWORD)
 
-    assert accounts.accounts == {}
+    assert store.created == []
 
 
 def test_rejects_a_short_owner_password() -> None:
-    accounts = FakeAccounts()
+    store = FakeOwnerStore()
     too_short = "x" * (OWNER_MIN_PASSWORD_LENGTH - 1)
 
     with pytest.raises(OwnerBootstrapError, match="at least"):
-        bootstrap_owner(accounts, Counter(0), "owner@example.com", too_short)
+        bootstrap_owner(store, "owner@example.com", too_short)
 
-    assert accounts.accounts == {}
+    assert store.created == []
 
 
 def test_rejects_an_invalid_email() -> None:
-    accounts = FakeAccounts()
+    store = FakeOwnerStore()
 
     with pytest.raises(OwnerBootstrapError):
-        bootstrap_owner(accounts, Counter(0), "not-an-email", PASSWORD)
+        bootstrap_owner(store, "not-an-email", PASSWORD)
 
-    assert accounts.accounts == {}
-
-
-def test_reports_a_failed_creation() -> None:
-    accounts = FakeAccounts()
-    accounts.accounts["owner@example.com"] = {
-        "password_hash": "x",
-        "token_hash": "y",
-        "verified": True,
-    }
-
-    with pytest.raises(OwnerBootstrapError, match="could not be created"):
-        bootstrap_owner(accounts, Counter(0), "owner@example.com", PASSWORD)
+    assert store.created == []
 
 
-def test_reports_a_failed_verification() -> None:
-    accounts = NeverVerifies()
+def test_rejects_a_password_equal_to_the_email() -> None:
+    store = FakeOwnerStore()
+    email = "owner-owner@example.com"
 
-    with pytest.raises(OwnerBootstrapError, match="could not be verified"):
-        bootstrap_owner(accounts, Counter(0), "owner@example.com", PASSWORD)
+    with pytest.raises(OwnerBootstrapError, match="same as the email"):
+        bootstrap_owner(store, email, email)
+
+    assert store.created == []
 
 
 @pytest.mark.parametrize(
-    "count, email",
-    [(1, "owner@example.com"), (0, "not-an-email")],
+    "exists, email",
+    [(True, "owner@example.com"), (False, "not-an-email")],
 )
 def test_error_messages_never_contain_the_password(
-    count: int,
+    exists: bool,
     email: str,
 ) -> None:
     with pytest.raises(OwnerBootstrapError) as caught:
-        bootstrap_owner(FakeAccounts(), Counter(count), email, PASSWORD)
+        bootstrap_owner(FakeOwnerStore(exists=exists), email, PASSWORD)
 
     assert PASSWORD not in str(caught.value)

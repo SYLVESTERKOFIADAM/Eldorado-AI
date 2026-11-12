@@ -16,8 +16,7 @@ import sys
 
 import psycopg
 
-from backend.database.account_store import PostgresAccountStore
-from backend.database.owner_store import PostgresAccountCounter
+from backend.database.owner_store import PostgresOwnerStore
 from backend.security.dev_safeguards import purge_refusal
 from backend.security.owner_bootstrap import (
     OWNER_MIN_PASSWORD_LENGTH,
@@ -55,8 +54,7 @@ def bootstrap() -> int:
 
     try:
         owner = bootstrap_owner(
-            PostgresAccountStore(dsn),
-            PostgresAccountCounter(dsn),
+            PostgresOwnerStore(dsn),
             email,
             password,
         )

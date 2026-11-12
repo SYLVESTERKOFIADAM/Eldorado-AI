@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from typing import Protocol
+from uuid import UUID
 
+from backend.security.passwords import hash_password
 from backend.security.registration import (
-    AccountStore,
     RegistrationInputError,
     normalize_email,
-    register_account,
-    verify_email,
+    validate_password,
 )
 
 OWNER_MIN_PASSWORD_LENGTH = 16
@@ -22,25 +22,33 @@ class OwnerBootstrapError(RuntimeError):
     """
 
 
-class AccountCounter(Protocol):
-    def count_accounts(self) -> int:
-        """Return the number of accounts, regardless of row-level security."""
+class OwnerStore(Protocol):
+    def create_owner_account(
+        self,
+        email: str,
+        password_hash: str,
+    ) -> UUID | None:
+        """
+        Create the verified owner and return its id, or None when an
+        account already exists.
+        """
 
 
 def bootstrap_owner(
-    accounts: AccountStore,
-    counter: AccountCounter,
+    store: OwnerStore,
     email: str,
     password: str,
 ) -> str:
     """
     Create the single, already-verified owner account.
 
-    Eldorado is a private single-owner system, so this refuses to run
-    when any account exists. It reuses the registration service for
-    validation and hashing, then consumes the verification token
-    immediately, because the operator running this command locally with
-    database-owner access is the proof of ownership.
+    Eldorado is a private single-owner system. This validates and hashes
+    the credentials, then asks the database to create the owner in one
+    locked, atomic step (bootstrap_owner_account, migration 0013). The
+    database refuses when any account exists, so the single-owner rule
+    holds even if two bootstraps race. The operator running this command
+    locally with database-owner access is the proof of ownership, so the
+    account is created already verified.
 
     Returns the normalized owner email address.
     """
@@ -58,22 +66,19 @@ def bootstrap_owner(
             f"{OWNER_MIN_PASSWORD_LENGTH} characters."
         )
 
-    if counter.count_accounts() != 0:
-        raise OwnerBootstrapError(
-            "An account already exists. Refusing to create a second owner."
-        )
-
     try:
-        result = register_account(accounts, normalized_email, password)
+        validate_password(password, normalized_email)
     except RegistrationInputError as exc:
         raise OwnerBootstrapError(str(exc)) from None
 
-    if result.verification_token is None:
-        raise OwnerBootstrapError("The owner account could not be created.")
+    owner_id = store.create_owner_account(
+        normalized_email,
+        hash_password(password),
+    )
 
-    if not verify_email(accounts, result.verification_token):
+    if owner_id is None:
         raise OwnerBootstrapError(
-            "The owner account was created but could not be verified."
+            "An account already exists. Refusing to create a second owner."
         )
 
     return normalized_email

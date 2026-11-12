@@ -10,6 +10,8 @@ import psycopg
 import pytest
 
 from backend.database.migration_runner import MigrationRunner
+from backend.database.owner_store import PostgresOwnerStore
+from backend.security.owner_bootstrap import bootstrap_owner
 
 ADMIN_DSN = "dbname=postgres user=postgres host=localhost port=5432"
 ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$c29tZWhhc2g"
@@ -317,3 +319,46 @@ def test_upgrade_fails_when_two_login_capable_accounts_exist(
         ).fetchone()[0]
     assert latest == 12
     assert column == 0
+
+
+def test_owner_store_creates_then_refuses(admin_dsn: str) -> None:
+    store = PostgresOwnerStore(admin_dsn)
+
+    first = store.create_owner_account("owner@example.com", ARGON2_HASH)
+    second = store.create_owner_account("other@example.com", ARGON2_HASH)
+
+    assert isinstance(first, uuid.UUID)
+    assert second is None
+
+
+def test_owner_store_cannot_run_as_the_app_role(app_dsn: str) -> None:
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        PostgresOwnerStore(app_dsn).create_owner_account(
+            "owner@example.com",
+            ARGON2_HASH,
+        )
+
+
+def test_bootstrap_owner_end_to_end(admin_dsn: str) -> None:
+    owner = bootstrap_owner(
+        PostgresOwnerStore(admin_dsn),
+        "  Owner@Example.COM ",
+        "a-sufficiently-long-owner-passphrase",
+    )
+
+    assert owner == "owner@example.com"
+    with psycopg.connect(admin_dsn) as connection:
+        row = connection.execute(
+            "SELECT is_owner, is_active, email_verified_at IS NOT NULL, "
+            "password_hash LIKE '$argon2id$%%' "
+            "FROM public.users WHERE email = %s",
+            (owner,),
+        ).fetchone()
+    assert row == (True, True, True, True)
+
+    with pytest.raises(Exception, match="already exists"):
+        bootstrap_owner(
+            PostgresOwnerStore(admin_dsn),
+            "other@example.com",
+            "another-sufficiently-long-passphrase",
+        )
